@@ -1,0 +1,18 @@
+# Line endings: normalise on commit, check out LF on every platform.
+#
+# Without this, `core.autocrlf=true` (a common Windows default, and what this
+# machine has) makes git rewrite LF to CRLF on checkout and warn on every add,
+# so the same file is LF or CRLF depending on who cloned it. Declaration files
+# and the browser half are plain UTF-8 JavaScript; nothing here needs CRLF.
+* text=auto eol=lf
+
+# Binary assets stay untouched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.tgz binary

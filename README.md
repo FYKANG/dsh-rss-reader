@@ -41,6 +41,14 @@ DeepSeek Harness（DSH）插件：**内嵌在 DSH 里的 RSS / Atom 阅读器**�
 需要 **DSH ≥ 0.1.5-rc.1**，以及 **`pnpm` 在 PATH 上**（`dsh plugin` 只是 pnpm 的转发器，缺了会报 `pnpm not found on PATH`）。
 
 ```sh
+dsh plugin --profile web add github:FYKANG/dsh-rss-reader
+```
+
+这条命令会装下包、**自动**把 `dsh-rss-reader` 追加进 profile 的 `dsh.profile.bundles`（因为包内声明了 `dsh.bundle.patch`，**不用手改 `cordis.patch.yml`**），并让浏览器半体随 GUI 一起下发；它按已安装依赖的真实包名核对，所以 `github:` 这种写法不需要额外配置。
+
+**从本地副本安装**（改代码时用这种，`github:` 跟随的是上游而不是你的本地改动）：
+
+```sh
 dsh plugin --profile web add file:<本仓库的绝对路径>
 ```
 
@@ -50,9 +58,7 @@ dsh plugin --profile web add file:<本仓库的绝对路径>
 dsh plugin --profile web add file:/path/to/dsh-rss-reader
 ```
 
-> 用**绝对路径**：`dsh plugin` 在 profile 目录里执行 pnpm，相对路径（`file:.`）会按你执行命令时所在的目录解析。
-
-这条命令会装下包、**自动**把 `dsh-rss-reader` 追加进 profile 的 `dsh.profile.bundles`（因为包内声明了 `dsh.bundle.patch`，**不用手改 `cordis.patch.yml`**），并让浏览器半体随 GUI 一起下发。
+> 用**绝对路径**：`dsh plugin` 在 profile 目录里执行 pnpm，相对路径（`file:.`）会按你执行命令时所在的目录解析。另外 `file:` 装进去的是**副本**（pnpm 的 `nodeLinker: hoisted` 不做符号链接），改完源码要重新 `add` 一次才生效。
 
 **装完重启 `dsh web`**（会中断当前会话与 GUI），然后刷新页面。启动后：左侧栏出现 **RSS** 图标（在中间主区域打开三栏面板），左侧栏底部出现 **RSS 阅读器** 按钮（在右侧边栏打开单栏面板）。
 
