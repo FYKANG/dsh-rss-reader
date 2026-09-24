@@ -1,0 +1,17 @@
+# Dependencies. `@deepseek-ai/cordis` and `schemastery` show up here as pnpm
+# links for local development; the published package declares them as optional
+# peer dependencies, so nothing in here belongs in the repository.
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Editors and OS cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

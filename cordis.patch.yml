@@ -1,0 +1,25 @@
+# dsh-rss-reader bundle patch
+#
+# This file is the `dsh.bundle.patch` layer of the package: installing it
+# through the official CLI —
+#
+#   dsh plugin --profile web add file:/path/to/dsh-rss-reader
+#
+# — reconciles `dsh.profile.bundles` against the installed state and, seeing
+# this declaration, appends `dsh-rss-reader` to the bundle stack. Profile boot
+# then merges THIS patch (a single `insert` of the plugin row), exactly like a
+# manual mount line. No profile file edits needed.
+#
+# Manual alternative — add to $DSH_HOME/profiles/<name>/cordis.patch.yml:
+#
+#   - insert:
+#       - id: rss-reader
+#         name: 'dsh-rss-reader'
+#         config:
+#           refreshMinutes: 30     # optional background refresh
+#
+# Note: use one channel or the other, never both (a double mount registers the
+# /api/rss-reader routes twice and fails the plugin tree at boot).
+- insert:
+    - id: rss-reader
+      name: 'dsh-rss-reader'

@@ -1,0 +1,28 @@
+# Temporary overlay: boot a SECOND dsh web instance for plugin verification.
+#
+# Several plugins in this profile are singletons that take a machine-wide lock
+# or bind a fixed route, so a second instance cannot mount them while the
+# user's everyday `dsh web` (port 3080) is running. Disabling them here leaves
+# dsh-base, dsh-web-app, and the client/server plugin under test (dsh-rss-reader)
+# composed, which is all the verification needs.
+#
+# `llm-codebuddy-cli` is deliberately NOT disabled: it registers the provider
+# the session's default model points at, and translation needs it. Disabling it
+# makes every translate call fail with "the model returned no text" — which
+# looks like a plugin bug but is an artifact of this overlay.
+#
+#   dsh --profile web --patch ./scripts/verify-profile.patch.yml --port 3199 --no-open
+- id: ui-task-board
+  disabled: true
+- id: better-sidebar
+  disabled: true
+- id: dshmarket
+  disabled: true
+- id: dsh-context
+  disabled: true
+- id: flowglass
+  disabled: true
+- id: notify-me
+  disabled: true
+- id: archify-skill-filesystem
+  disabled: true
