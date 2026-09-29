@@ -184,6 +184,17 @@ if (definition !== undefined) {
   check("the tab title resolves", typeof definition.title === "function" && definition.title().length > 0);
   check("the guide entry opens it", Array.isArray(definition.guide) && definition.guide.length === 1
     && typeof definition.guide[0].title === "function" && typeof definition.guide[0].order === "number");
+  // dsh 0.1.7 requires an `id` on every guide entry: the guide keys each box by
+  // it (`entryId` on the `sidebar.right.tab.guide.entry` seat, plus a React key
+  // of `[providerId, entryId]`), and the tab registry rejects a type whose
+  // entries share one. 0.1.5 declared no such field, so an entry written against
+  // it leaves `entry.id` undefined.
+  const entry = Array.isArray(definition.guide) ? definition.guide[0] : undefined;
+  check("the guide entry declares an id (required by dsh ≥ 0.1.7)",
+    typeof entry?.id === "string" && entry.id.length > 0, entry === undefined ? "no guide entry" : JSON.stringify(entry.id));
+  check("guide entry ids are unique within the type",
+    Array.isArray(definition.guide)
+    && new Set(definition.guide.map((item) => item.id)).size === definition.guide.length);
   const body = registrations.find((entry) => entry.options.name === "sidebar.right.pane.tab");
   check("registers the tab body seat", body !== undefined);
   if (body !== undefined) {

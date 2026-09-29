@@ -38,7 +38,9 @@ DeepSeek Harness（DSH）插件：**内嵌在 DSH 里的 RSS / Atom 阅读器**�
 
 插件是标准的 DSH 组合包（Cordis 插件），以依赖的形式装进某个 profile，由该 profile 启动时挂载。下面以 web profile 为例（`$DSH_HOME/profiles/web`，`$DSH_HOME` 默认 `~/.dsh`）。
 
-需要 **DSH ≥ 0.1.5-rc.1**，以及 **`pnpm` 在 PATH 上**（`dsh plugin` 只是 pnpm 的转发器，缺了会报 `pnpm not found on PATH`）。
+需要 **DSH ≥ 0.2.0-rc.1**，以及 **`pnpm` 在 PATH 上**（`dsh plugin` 只是 pnpm 的转发器，缺了会报 `pnpm not found on PATH`）。
+
+> 为什么是 0.2.0：插件按 0.2.0 这一代的宿主契约校准（`defineTool` 的 `output.schema` / `render` / `presentCall`、`webServer.register`、`systemPrompt.section`、`commands.register`、`sessionController.modelCatalog()`，以及 `slots` / `sidebar.panellist` / `settings.section` / 右侧边栏 `guide[].id`）。这些在 0.2.0-rc.1 上都与 0.1.7 一致，所以下限直接对齐当前使用的运行时；更早的 0.1.5 / 0.1.6 缺 `guide[].id`，安装会被 `dsh` 的版本校验拦下（peerDependencies 不满足），而不是装上以后行为诡异。
 
 ```sh
 dsh plugin --profile web add github:FYKANG/dsh-rss-reader
@@ -470,7 +472,7 @@ curl -s -o served-client.js "http://127.0.0.1:3199/plugins/??dsh-rss-reader/clie
 node scripts/verify-served-bundle.mjs served-client.js
 ```
 
-`verify-served-bundle.mjs` 除了 bundle 契约，还会驱动 `apply(ctx)` 检查槽位注册：`main` 面板、`sidebar.panellist` 行、**RSS 设置页（`settings.section`）且「通用」里不再有 RSS 行**、**右侧边栏 tab 类型 / 正文坑位 / 启动器**，以及「只注册进已知槽位」。它会给 `/prefs` 打一个桩，因此看到的是「用户没动过设置」时的那套布局。
+`verify-served-bundle.mjs` 除了 bundle 契约，还会驱动 `apply(ctx)` 检查槽位注册：`main` 面板、`sidebar.panellist` 行、**RSS 设置页（`settings.section`）且「通用」里不再有 RSS 行**、**右侧边栏 tab 类型 / 正文坑位 / 启动器**、**guide 条目的 `id`（0.1.7 起必填、0.2.0 仍是必填，guide 拿它当 `entryId` 与 React key）**，以及「只注册进已知槽位」。它会给 `/prefs` 打一个桩，因此看到的是「用户没动过设置」时的那套布局。
 
 `scripts/verify-profile.patch.yml` 会临时禁用 `ui-task-board`、`better-sidebar` 等会抢占全局锁或固定端口的插件，只保留 `dsh-base`、`dsh-web-app` 与待验证插件。**它只用于验证，不要在日常启动中使用。**
 

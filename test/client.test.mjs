@@ -437,6 +437,10 @@ test("apply registers the right Sidebar tab type, its body seat, and a launcher"
   // A page type is opened by kind and must not claim resource addresses.
   assert.equal(definition.patterns, undefined);
   assert.equal(definition.guide.length, 1);
+  // dsh ≥ 0.1.7 requires an `id` per guide entry: the guide keys each rendered
+  // box by it, and the tab registry rejects a type whose entries share one. An
+  // entry written against 0.1.5 leaves it undefined.
+  assert.equal(definition.guide[0].id, "dsh-rss-reader");
   assert.equal(definition.guide[0].title(), "RSS 阅读器");
   assert.equal(typeof definition.guide[0].description(), "string");
   assert.equal(typeof definition.guide[0].icon, "function");
@@ -1479,6 +1483,147 @@ test("leaving an article keeps the offset for when the reader comes back", async
         writes.filter((body) => "lastScrollTop" in body),
         [],
         "回到列表不该改动已记住的位置"
+      );
+    });
+  });
+});
+
+/**
+ * The list's own offset, which is a different scroll box from the article's.
+ *
+ * Only the recording half is observable here: the test renderer assigns no refs,
+ * so `listPaneRef.current` is null and the restore effect returns before touching
+ * the element — the same limitation the article's restore documents. What is
+ * asserted instead is that the offset is captured from the list and that opening
+ * an article does not lose it, which is the part that was broken: the pending
+ * debounced write is cleared when the detail replaces the list, so a write armed
+ * by scrolling alone never survives the swap.
+ */
+test("the list's scroll offset is kept when an article replaces it", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = markdownState("正文段落一");
+    const writes = [];
+    // Same recording trick as the article's test: only the 400 ms write is
+    // captured, so the renderer keeps using real timers and cannot hang.
+    const original = globalThis.setTimeout;
+    const pending = [];
+    globalThis.setTimeout = (callback, delay) => {
+      if (delay === 400) {
+        pending.push(callback);
+        return 0;
+      }
+      return original(callback, delay);
+    };
+    try {
+      await withApi(panelPrefsApi(host, { onPrefs: (body) => writes.push(body) }), async () => {
+        const render = () => shim.render(shim.react.createElement(exports.RssPanel, { variant: "sidebar" }));
+        let tree = await render();
+
+        // The list is the scroll container that carries the watcher.
+        const list = shim.findAll(tree, "div").find((node) => typeof node.props.onScroll === "function"
+          && node.props.id === undefined);
+        assert.ok(list !== undefined, "列表需要一个自己的滚动容器");
+
+        // The reader scrolls the list down, then opens an article from it.
+        // Mounting already armed one write of its own (the article effect), so the
+        // queue is emptied first — otherwise the assertion below would pass even if
+        // scrolling armed nothing, which is exactly the behaviour under test.
+        pending.length = 0;
+        list.props.onScroll({ currentTarget: { scrollTop: 512 } });
+        await settle();
+        assert.ok(pending.length >= 1, "滚动列表后应排定一次延迟写入");
+
+        buttonByText(shim, tree, "Open item").props.onClick();
+        await settle();
+        await settle();
+
+        // The offset has to be written by the click itself, because the pending
+        // debounced write is cleared when the selection changes.
+        assert.deepEqual(
+          writes.filter((body) => "lastListScrollTop" in body),
+          [{ lastListScrollTop: "512" }],
+          "打开条目时应该已经记下列表位置"
+        );
+        // And it must not be confused with the article's own offset.
+        assert.deepEqual(
+          writes.filter((body) => "lastScrollTop" in body),
+          [],
+          "列表位置不该写进正文的键"
+        );
+      });
+    } finally {
+      globalThis.setTimeout = original;
+    }
+  });
+});
+
+test("a list the reader never scrolled costs no write when an article is opened", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = markdownState("正文段落一");
+    const writes = [];
+    await withApi(panelPrefsApi(host, { onPrefs: (body) => writes.push(body) }), async () => {
+      const render = () => shim.render(shim.react.createElement(exports.RssPanel, { variant: "sidebar" }));
+      const tree = await render();
+      buttonByText(shim, tree, "Open item").props.onClick();
+      await settle();
+      await settle();
+      // Nothing to remember: writing "" here would turn every opened article
+      // into an extra request, and `lastListScrollTop` would stop meaning
+      // "there is a position to restore".
+      assert.deepEqual(
+        writes.filter((body) => "lastListScrollTop" in body),
+        [],
+        "没滚动过的列表不该产生写入"
+      );
+    });
+  });
+});
+
+test("switching the source drops the list offset instead of restoring over it", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = markdownState("正文段落一");
+    // A stored offset, plus a second source to switch to.
+    host.state.feeds.push({
+      id: "f2",
+      url: "https://s.test/two",
+      title: "另一个源",
+      siteLink: "https://s.test/two",
+      description: "",
+      image: "",
+      format: "rss",
+      group: "",
+      addedAt: "2024-05-01T00:00:00.000Z",
+      fetchedAt: new Date().toISOString(),
+      lastError: "",
+      unread: 0,
+      itemCount: 0,
+      latestDate: "",
+      items: []
+    });
+    const writes = [];
+    await withApi(panelPrefsApi(host, {
+      prefs: { lastListScrollTop: "512" },
+      stored: ["lastListScrollTop"],
+      onPrefs: (body) => writes.push(body)
+    }), async () => {
+      const render = () => shim.render(shim.react.createElement(exports.RssPanel, { variant: "sidebar" }));
+      const tree = await render();
+      buttonByText(shim, tree, "另一个源").props.onClick();
+      await settle();
+      await settle();
+      // A different source is a different list, so its top is the only honest
+      // place to start — an offset carried across would land the reader in the
+      // middle of items they have never seen.
+      assert.deepEqual(
+        writes.filter((body) => "lastListScrollTop" in body),
+        [{ lastListScrollTop: "" }],
+        "换源应清掉列表位置"
       );
     });
   });
@@ -3126,7 +3271,10 @@ test("hostile markup in a feed body cannot inject script", async () => {
       // `children`.
       const ownHandlers = new Set([
         "onClick", "onChange", "onLoad", "onError", "onKeyDown", "onContextMenu",
-        "onDragStart", "onDragOver", "onDrop", "onDragEnd"
+        "onDragStart", "onDragOver", "onDrop", "onDragEnd",
+        // The list panes track their own scroll offset to remember the reader's
+        // place. It is attached by the panel to its <div>, never by feed markup.
+        "onScroll"
       ]);
       for (const node of all) {
         for (const key of Object.keys(node.props ?? {})) {
