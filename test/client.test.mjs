@@ -1339,6 +1339,118 @@ test("the way back to the list stays pinned while the article scrolls", async ()
   });
 });
 
+test("the article's controls hold the top-right of the reading pane", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = markdownState("正文段落一");
+    const calls = [];
+    await withApi(markdownApi(host, (kind) => calls.push(kind)), async () => {
+      const tree = await renderOpenItem(shim, exports, host);
+
+      // The controls used to share a row with the title, so a long article
+      // scrolled them out of reach. In this presentation they hold the right end
+      // of the pane's first row instead — in the flow, not as an overlay, so
+      // there is nothing for a pinned bar to paint over and nothing covering the
+      // article.
+      const bar = shim.findAll(tree, "div").find((node) => node.props?.style?.justifyContent === "flex-end"
+        && node.props?.style?.flexWrap === "wrap");
+      assert.ok(bar !== undefined, "文章的操作应排在阅读区第一行右端");
+      assert.equal(bar.props.style.position, "relative", "它在正常流里，不覆盖正文");
+      assert.equal(bar.props.style.pointerEvents, undefined, "不需要为覆盖正文而屏蔽指针");
+      assert.equal(bar.props.style.bottom, undefined, "不再贴底");
+
+      // The reading pane must not have gained a positioning context it does not
+      // need — that would be left over from the overlay approach.
+      const pane = shim.findAll(tree, "div")
+        .find((node) => node.props?.style?.overflowY === "auto" && String(node.props?.style?.padding ?? "").includes("20px"));
+      assert.ok(pane !== undefined, "三栏的阅读区应可识别");
+      assert.equal(pane.props.style.position, undefined, "阅读区不需要定位锚点");
+
+      // The capsule gathers the controls, right-aligned.
+      const capsule = shim.findAll(tree, "div")
+        .find((node) => node.props?.style?.pointerEvents === "auto" && node.props?.style?.borderRadius === "10px");
+      assert.ok(capsule !== undefined, "the control cluster should render");
+      assert.equal(capsule.props.style.justifyContent, "flex-end", "胶囊内容靠右");
+
+      // The four the reader asked for, all inside the cluster. The item is
+      // already read, so the action offered is the way back to unread.
+      const texts = shim.findAll(capsule, "button").map((node) => shim.textContent(node));
+      for (const label of ["收藏", "译", "标为未读"]) {
+        assert.ok(texts.includes(label), `操作区里应有「${label}」，实得 ${JSON.stringify(texts)}`);
+      }
+      const original = shim.findAll(capsule, "a").map((node) => node.props.href);
+      assert.deepEqual(original, ["https://s.test/1"], "「打开原文」应指向条目链接");
+
+      // They must act on the item, not merely render: the star patches it.
+      const star = shim.findAll(capsule, "button").find((node) => shim.textContent(node) === "收藏");
+      star.props.onClick();
+      await settle();
+      assert.ok(calls.some((kind) => String(kind).includes("PATCH") || String(kind).includes("items")),
+        "点收藏应发出标记请求");
+    });
+  });
+});
+
+test("the narrow panel pins the same controls, folded to glyphs", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = markdownState("正文段落一");
+    await withApi(panelPrefsApi(host, {}), async () => {
+      const render = () => shim.render(shim.react.createElement(exports.RssPanel, { variant: "sidebar" }));
+      let tree = await render();
+
+      // Nothing is open, so there is nothing to act on and no controls.
+      assert.equal(shim.findAll(tree, "div").find((node) => node.props?.style?.borderRadius === "10px"),
+        undefined, "列表态不该有操作区");
+
+      buttonByText(shim, tree, "Open item").props.onClick();
+      await settle();
+      await settle();
+      await settle();
+      tree = await render();
+
+      // In the narrow pane the controls join the way-back bar, which is already
+      // sticky — that is what keeps them in the top-right corner, and it is why
+      // they are not an overlay here.
+      const pane = shim.findAll(tree, "div").find((node) => node.props.id === "rss-reader-detail");
+      assert.ok(pane !== undefined, "the scrolling pane should render");
+      const pinned = shim.findAll(pane, "div").find((node) => node.props?.style?.position === "sticky");
+      assert.ok(pinned !== undefined, "the way-back bar should still be pinned");
+      assert.equal(pinned.props.style.justifyContent, "space-between",
+        "返回在左、操作在右，同一条固定的条上");
+
+      // The sidebar is too narrow for the wide labels, so the controls fold to
+      // glyphs with their full text kept as tooltips.
+      const capsule = shim.findAll(pane, "div")
+        .find((node) => node.props?.style?.pointerEvents === "auto" && node.props?.style?.borderRadius === "10px");
+      assert.ok(capsule !== undefined, "the control cluster should render");
+      assert.ok(shim.findAll(pinned, "div").includes(capsule), "操作区要在那条固定的条里面");
+      const buttons = shim.findAll(capsule, "button");
+      const glyphs = buttons.map((node) => shim.textContent(node));
+      assert.ok(glyphs.includes("★"), `收藏应收成 ★，实得 ${JSON.stringify(glyphs)}`);
+      assert.ok(glyphs.includes("○"), `未读应收成 ○，实得 ${JSON.stringify(glyphs)}`);
+      const star = buttons.find((node) => shim.textContent(node) === "★");
+      assert.equal(star.props.title, "收藏", "收成图标后仍要说明它是什么");
+
+      // The source name gave up its place on that bar for the controls; the
+      // article's own metadata line still names the feed.
+      assert.equal(shim.textContent(pinned).includes("示例订阅源"), false,
+        "固定条上不再重复源名");
+      assert.ok(shim.textContent(pane).includes("示例订阅源"), "正文的元信息行仍写明源名");
+
+      // Going back to the list takes the controls with it: they belong to the
+      // article, not to the pane.
+      buttonByText(shim, tree, "返回列表").props.onClick();
+      await settle();
+      tree = await render();
+      assert.equal(shim.findAll(tree, "div").find((node) => node.props?.style?.borderRadius === "10px"),
+        undefined, "回到列表后操作区应消失");
+    });
+  });
+});
+
 test("the panel remembers where the reader was and returns there", async () => {
   const shim = createReactShim();
   await withWindow(async () => {
@@ -2295,6 +2407,86 @@ test("a fresh cache does not trigger a background refresh", async () => {
   });
 });
 
+/**
+ * Build a host double whose one feed carries several dated items, so the time
+ * windows can be exercised.
+ *
+ * Offsets are counted in *local* days from today's midnight — the unit the
+ * windows are defined in — so a test states intent ("published yesterday")
+ * rather than a fragile absolute timestamp. Sunday is avoided as the starting
+ * point because subtracting local days across a DST transition would shift the
+ * hour and could push an item over a window edge.
+ *
+ * @param {Array<{days: number, title: string, read?: boolean}>} items - items,
+ *   `days` being whole local days before today.
+ * @param {object} [hostFields] - extra host-level fields.
+ * @returns {object} the host double.
+ */
+function datedState(items, hostFields = {}) {
+  const state = populatedState();
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const rows = items.map((entry, index) => ({
+    id: `i${index + 1}`,
+    title: entry.title,
+    link: `https://s.test/${index + 1}`,
+    summary: "",
+    summaryMarkdown: "",
+    content: "",
+    markdown: `正文 ${entry.title}`,
+    author: "",
+    // 12:00 local, a day `entry.days` before today. `days: null` means the
+    // source published no date at all.
+    date: entry.days === null || entry.days === undefined
+      ? ""
+      : new Date(midnight.getTime() - entry.days * 86400000 + 12 * 3600000).toISOString(),
+    categories: [],
+    enclosure: "",
+    read: entry.read === true,
+    starred: false,
+    translated: false
+  }));
+  state.feeds = [{ ...state.feeds[0], items: rows }];
+  const unread = rows.filter((row) => !row.read).length;
+  state.totals = { feeds: 1, items: rows.length, unread, lastFetched: new Date().toISOString(), failures: 0 };
+  const first = rows[0];
+  return {
+    state,
+    item: { ...first, markdown: first.markdown },
+    ...hostFields
+  };
+}
+
+/** The chip / select labels for the time windows. */
+const RANGE_LABELS = ["全部", "今天", "近 3 天", "近 7 天"];
+
+/**
+ * Click a time-window chip in the wide presentation.
+ * @param {object} shim - the render shim.
+ * @param {object} tree - the rendered tree.
+ * @param {string} label - the chip's label.
+ */
+function pickRange(shim, tree, label) {
+  const chip = shim.findAll(tree, "button").find((node) => shim.textContent(node) === label);
+  assert.ok(chip !== undefined, `should find the ${label} chip`);
+  chip.props.onClick();
+}
+
+/**
+ * Select one subscription in the wide presentation's source column.
+ * @param {object} shim - the render shim.
+ * @param {object} tree - the rendered tree.
+ * @param {string} title - the feed's title.
+ */
+function selectFeedIn(shim, tree, title) {
+  const row = shim.findAll(tree, "button").find((node) => {
+    const text = shim.textContent(node);
+    return text.includes(title) && text.includes("⠿");
+  });
+  assert.ok(row !== undefined, `should find the ${title} source row`);
+  row.props.onClick();
+}
+
 // ── Markdown rendering, images, and translation ─────────────────────────────
 
 /**
@@ -2805,7 +2997,7 @@ test("a cached translation is revealed without calling the model", async () => {
     await withApi(markdownApi(host, (kind) => calls.push(kind)), async () => {
       const tree = await renderOpenItem(shim, exports, host);
       // With a cached translation the control offers to show it.
-      const button = buttonByText(shim, tree, "显示译文");
+      const button = buttonByText(shim, tree, "译文");
       assert.ok(button !== undefined, "a cached translation should offer a toggle");
       button.props.onClick();
       await settle();
@@ -2878,7 +3070,7 @@ test("对照 interleaves each paragraph with its translation", async () => {
     }, async () => {
       let tree = await renderOpenItem(shim, exports, host);
       // Translation-only is for reading the translation on its own.
-      buttonByText(shim, tree, "显示译文").props.onClick();
+      buttonByText(shim, tree, "译文").props.onClick();
       await settle();
       tree = await shim.render(shim.react.createElement(exports.RssPanel));
       const translatedOnly = shim.textContent(tree);
@@ -3185,7 +3377,7 @@ test("switching the target language drops the shown translation", async () => {
     });
     await withApi(markdownApi(host), async () => {
       const tree = await renderOpenItem(shim, exports, host);
-      buttonByText(shim, tree, "显示译文").props.onClick();
+      buttonByText(shim, tree, "译文").props.onClick();
       await settle();
       const shown = await shim.render(shim.react.createElement(exports.RssPanel));
       assert.match(shim.textContent(shown), /中文译文/);
@@ -3499,3 +3691,293 @@ test("a discovery failure is shown in the dialog", async () => {
     );
   });
 });
+
+// ── time windows ────────────────────────────────────────────────────────────
+
+test("the stream opens on the full timeline, with the windows offered but unused", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = datedState([
+      { days: 0, title: "今天的新闻" },
+      { days: 4, title: "四天前的旧闻" }
+    ]);
+    await withApi(markdownApi(host), async () => {
+      const tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      const text = shim.textContent(tree);
+
+      // The default matters: adding a time filter must not silently start
+      // hiding things from a reader who never asked for a window.
+      assert.match(text, /今天的新闻/);
+      assert.match(text, /四天前的旧闻/);
+
+      // All four windows are on offer, and none is in force.
+      const labels = shim.findAll(tree, "button").map((node) => shim.textContent(node));
+      for (const label of RANGE_LABELS) {
+        assert.ok(labels.includes(label), `应提供「${label}」时间胶囊`);
+      }
+      const pressed = shim.findAll(tree, "button").filter((node) => node.props["aria-pressed"] === true);
+      assert.deepEqual(pressed.map((node) => shim.textContent(node)), ["全部"],
+        "默认生效的应当是「全部」");
+    });
+  });
+});
+
+test("choosing 今天 narrows the stream to the local calendar day", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = datedState([
+      { days: 0, title: "今天的新闻" },
+      { days: 1, title: "昨天的旧闻" },
+      { days: 4, title: "四天前的旧闻" }
+    ]);
+    await withApi(markdownApi(host), async () => {
+      let tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      pickRange(shim, tree, "今天");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      const text = shim.textContent(tree);
+
+      assert.match(text, /今天的新闻/, "今天发布的应当留下");
+      assert.doesNotMatch(text, /昨天的旧闻/, "昨天的应当被窗口排除");
+      assert.doesNotMatch(text, /四天前的旧闻/, "更早的同样排除");
+
+      // The chip in force says so, rather than leaving the reader guessing.
+      const pressed = shim.findAll(tree, "button").filter((node) => node.props["aria-pressed"] === true);
+      assert.deepEqual(pressed.map((node) => shim.textContent(node)), ["今天"]);
+    });
+  });
+});
+
+test("an empty 今天 stays empty instead of widening on its own", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    // Nothing today; the newest item is two days old — inside 近 3 天, so the
+    // panel *could* widen to it. It must not: the chosen window is honoured.
+    const host = datedState([
+      { days: 2, title: "两天前的新闻" },
+      { days: 9, title: "九天前的旧闻" }
+    ]);
+    await withApi(markdownApi(host), async () => {
+      let tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      pickRange(shim, tree, "今天");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      const text = shim.textContent(tree);
+
+      // The window means what it says. Widening to 近 3 天 used to make the chip
+      // a liar: it read 今天 while the list showed three days.
+      assert.doesNotMatch(text, /两天前的新闻/, "选了「今天」就不该出现前天的内容");
+      assert.doesNotMatch(text, /九天前的旧闻/);
+      assert.match(text, /今天内暂无内容，可换一个时间范围/, "空列表要说明，而不是自己换范围");
+
+      // The choice is left exactly as the reader made it.
+      const pressed = shim.findAll(tree, "button").filter((node) => node.props["aria-pressed"] === true);
+      assert.deepEqual(pressed.map((node) => shim.textContent(node)), ["今天"]);
+
+      // And the reader can widen it themselves.
+      pickRange(shim, tree, "近 3 天");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      assert.match(shim.textContent(tree), /两天前的新闻/, "手动换到近 3 天即可看到");
+      assert.doesNotMatch(shim.textContent(tree), /九天前的旧闻/);
+    });
+  });
+});
+
+test("a window holding nothing at all says which window it was", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = datedState([{ days: 30, title: "一个月前的旧闻" }]);
+    await withApi(markdownApi(host), async () => {
+      let tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      pickRange(shim, tree, "今天");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      const text = shim.textContent(tree);
+
+      assert.doesNotMatch(text, /一个月前的旧闻/);
+      assert.match(text, /今天内暂无内容/, "要说清是哪个范围空着");
+    });
+  });
+});
+
+test("items with no date are counted and reported, never quietly dropped", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = datedState([
+      { days: 0, title: "今天的新闻" },
+      { days: null, title: "没有日期的内容" }
+    ]);
+    await withApi(markdownApi(host), async () => {
+      let tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      // With no window in force the undated item is simply present, and marked.
+      assert.match(shim.textContent(tree), /没有日期的内容/);
+      assert.match(shim.textContent(tree), /无日期/, "没有日期的条目要带徽标");
+
+      pickRange(shim, tree, "今天");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      const text = shim.textContent(tree);
+
+      // It cannot be placed in a window, so it is excluded — but the reader is
+      // told how many were left out, or the gap becomes untrustworthy.
+      assert.doesNotMatch(text, /没有日期的内容/);
+      assert.match(text, /1 条内容没有发布日期，未计入当前时间范围/);
+    });
+  });
+});
+
+test("the today / older boundary is marked, so a window change is visible", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    // Enough rows on both sides that the cut lands below the fold. This is the
+    // shape that made the filter look broken: the stream is newest-first, so
+    // with a full day of news the rows above the boundary are identical under
+    // every window, and nothing on screen moves when the window changes.
+    const host = datedState([
+      ...Array.from({ length: 8 }, (_, i) => ({ days: 0, title: `今天的第${i + 1}条` })),
+      ...Array.from({ length: 8 }, (_, i) => ({ days: 3 + i, title: `更早的第${i + 1}条` }))
+    ]);
+    await withApi(markdownApi(host), async () => {
+      let tree = await shim.render(shim.react.createElement(exports.RssPanel));
+
+      // The boundary states how much of the list is today, which is the fact the
+      // filter acts on.
+      assert.match(shim.textContent(tree), /今天到此为止（8 条）· 以下为更早的内容/);
+
+      // It sits between the two groups, and both groups are present.
+      const titles = shim.findAll(tree, "button")
+        .map((node) => shim.textContent(node))
+        .filter((text) => /^(今天的|更早的)第/.test(text));
+      assert.equal(titles.length, 16, "two groups of eight should render");
+      assert.equal(titles.findIndex((text) => text.startsWith("更早的")), 8,
+        "分界线之前应当正好是今天的 8 条");
+
+      // Choosing 今天 now has a visible consequence: the boundary goes away,
+      // because everything below it has been cut.
+      pickRange(shim, tree, "今天");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      assert.doesNotMatch(shim.textContent(tree), /今天到此为止/,
+        "窗口已把更早的内容排除，分界线就没有意义了");
+      assert.match(shim.textContent(tree), /今天的第8条/);
+      assert.doesNotMatch(shim.textContent(tree), /更早的第1条/);
+    });
+  });
+});
+
+test("feed badges count the window in force, not the whole feed", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    // One feed with three unread from today and six older ones — the shape that
+    // made the badges contradict the header: 今天 read 3 while the chip said 9.
+    const host = datedState([
+      { days: 0, title: "今天 A" },
+      { days: 0, title: "今天 B" },
+      { days: 0, title: "今天 C" },
+      ...Array.from({ length: 6 }, (_, i) => ({ days: 4 + i, title: `更早的第${i + 1}条` }))
+    ]);
+    await withApi(markdownApi(host), async () => {
+      const feedChip = (tree) => shim.findAll(tree, "button")
+        .find((node) => shim.textContent(node).includes("示例订阅源"));
+      const badgeOf = (tree) => shim.findAll(feedChip(tree), "span")
+        .map((node) => shim.textContent(node))
+        .find((text) => /^\d+$/.test(text));
+
+      // No window: the feed badge states the feed's whole unread count.
+      let tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      assert.equal(badgeOf(tree), "9");
+      assert.match(shim.textContent(tree), /今天 3 条未读 · 更早 6 条未读/);
+
+      // Under 今天 the badge has to follow, or it contradicts both the header
+      // and the stream below it.
+      pickRange(shim, tree, "今天");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      assert.equal(badgeOf(tree), "3", "标签应显示该时间范围内的未读数");
+      assert.match(shim.textContent(tree), /今天 3 条未读/);
+      assert.doesNotMatch(shim.textContent(tree), /更早 6 条未读/,
+        "已选定时间范围时，只报该范围的数量");
+
+      // The window is scoped by time only: selecting the feed must not change
+      // what its own chip says.
+      selectFeedIn(shim, tree, "示例订阅源");
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      assert.equal(badgeOf(tree), "3", "选中该源不应改变它自己的标签");
+    });
+  });
+});
+
+test("a stream that is entirely today has no boundary to draw", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = datedState([
+      { days: 0, title: "今天 A" },
+      { days: 0, title: "今天 B" }
+    ]);
+    await withApi(markdownApi(host), async () => {
+      const tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      // A boundary with nothing below it would be a line dividing nothing.
+      assert.doesNotMatch(shim.textContent(tree), /今天到此为止/);
+    });
+  });
+});
+
+test("the header splits unread into today and the older backlog", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = datedState([
+      { days: 0, title: "今天 A" },
+      { days: 0, title: "今天 B" },
+      { days: 5, title: "更早 C" },
+      { days: 6, title: "更早 D" },
+      { days: 7, title: "更早 E" }
+    ]);
+    await withApi(markdownApi(host), async () => {
+      const tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      // One number cannot be acted on; splitting it is the whole point.
+      assert.match(shim.textContent(tree), /今天 2 条未读 · 更早 3 条未读/);
+    });
+  });
+});
+
+test("the narrow panel picks a window from a select instead of four chips", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = datedState([
+      { days: 0, title: "今天的新闻" },
+      { days: 5, title: "五天前的旧闻" }
+    ]);
+    await withApi(panelPrefsApi(host, {}), async () => {
+      const render = () => shim.render(shim.react.createElement(exports.RssPanel, { variant: "sidebar" }));
+      let tree = await render();
+
+      const select = shim.findAll(tree, "select").find((node) => node.props["aria-label"] === "时间范围");
+      assert.ok(select !== undefined, "窄栏应有时间范围选择器");
+      assert.deepEqual(shim.findAll(select, "option").map((node) => node.props.value),
+        ["all", "today", "3d", "7d"]);
+      assert.equal(select.props.value, "all", "默认仍是全部");
+      // Four chips would not fit the column; the select is the whole control.
+      assert.equal(shim.findAll(tree, "button").find((node) => shim.textContent(node) === "今天"), undefined);
+
+      select.props.onChange({ target: { value: "today" } });
+      await settle();
+      tree = await render();
+      const text = shim.textContent(tree);
+      assert.match(text, /今天的新闻/);
+      assert.doesNotMatch(text, /五天前的旧闻/);
+    });
+  });
+});
+
