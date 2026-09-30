@@ -3269,6 +3269,59 @@ test("an error notice waits for a manual close instead of expiring", async () =>
   });
 });
 
+test("notices float in the bottom-right, semi-transparent, with a distinct close", async () => {
+  const shim = createReactShim();
+  await withWindow(async () => {
+    const { exports } = await loadBundle(seedsFor(shim));
+    const host = markdownState("body");
+    const api = markdownApi(host);
+    await withApi((path, call) => {
+      if (path.includes("/refresh")) {
+        return { body: { ok: true, state: host.state, summary: { refreshed: 3, results: [1, 2, 3, 4], added: 12, failed: 0 } } };
+      }
+      return api(path, call);
+    }, async () => {
+      let tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      buttonByText(shim, tree, "刷新").props.onClick();
+      await settle();
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+
+      // The message must not sit in the panel's flow: arriving mid-article it
+      // would shove the list the reader is looking at.
+      const layer = shim.findAll(tree, "div").find((node) => node.props?.style?.position === "fixed"
+        && node.props?.style?.right !== undefined && node.props?.style?.bottom !== undefined);
+      assert.ok(layer !== undefined, "提示应固定悬浮在角落");
+      assert.equal(layer.props.style.right, "18px", "贴右下角");
+      assert.equal(layer.props.style.bottom, "18px");
+      assert.ok(Number(layer.props.style.zIndex) >= 2200, "要盖在面板内容之上");
+
+      const toast = shim.findAll(layer, "div").find((node) => node.props?.style?.backdropFilter !== undefined);
+      assert.ok(toast !== undefined, "提示卡片应当半透明（带背景模糊）");
+      const background = String(toast.props.style.background);
+      assert.match(background, /rgba\(/, `底色应是半透明而非实色，实得 ${background}`);
+
+      // The close control must not wear the message's ink: sharing it made the
+      // two read as one sentence with a stray 「关闭」 stuck on the end.
+      const text = shim.findAll(toast, "span")[0];
+      const close = shim.findAll(toast, "button")[0];
+      assert.ok(text !== undefined, "提示文字应自成一块");
+      assert.ok(close !== undefined, "关闭应是一个独立控件");
+      assert.notEqual(close.props.style.color, text.props.style.color,
+        "关闭按钮的颜色要和提示文字区分开");
+      assert.notEqual(close.props.style.color, undefined);
+      assert.equal(close.props.style.borderRadius, "999px", "关闭做成独立的小胶囊");
+      assert.ok(String(close.props.style.border ?? "").length > 0, "关闭要有自己的描边");
+
+      // Clicking it clears that message only.
+      close.props.onClick();
+      await settle();
+      tree = await shim.render(shim.react.createElement(exports.RssPanel));
+      assert.doesNotMatch(shim.textContent(tree), /已刷新 3\/4 个源/);
+    });
+  });
+});
+
 test("fetching older articles: the button, the dialog, and the request", async () => {
   const shim = createReactShim();
   await withWindow(async () => {
