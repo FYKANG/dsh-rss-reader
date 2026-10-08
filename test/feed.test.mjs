@@ -223,6 +223,22 @@ test("parseFeed flattens content:encoded markup", () => {
   assert.equal(feed.items[1].content, "Body with markup");
 });
 
+test("parseFeed keeps one item when a feed repeats a guid", () => {
+  // openai.com/blog/rss.xml ships one story under the same guid twice, with the
+  // two copies dated 17:00 and 10:00. Both were stored, and only the first row
+  // could ever be marked read — the twin stayed unread in the list for good.
+  const repeated = `<rss version="2.0"><channel><title>Dup</title><link>https://d.test/</link>
+  <item><title>Introducing GPT-6.1 Sol</title><link>https://d.test/introducing-gpt-6-1-sol</link><guid>https://d.test/introducing-gpt-6-1-sol</guid><pubDate>Tue, 29 Sep 2026 17:00:00 GMT</pubDate></item>
+  <item><title>Another story</title><link>https://d.test/another</link><pubDate>Tue, 29 Sep 2026 12:00:00 GMT</pubDate></item>
+  <item><title>Introducing GPT-6.1 Sol</title><link>https://d.test/introducing-gpt-6-1-sol</link><guid>https://d.test/introducing-gpt-6-1-sol</guid><pubDate>Tue, 29 Sep 2026 10:00:00 GMT</pubDate></item>
+</channel></rss>`;
+  const feed = parseFeed(repeated);
+  assert.equal(feed.items.length, 2, "the repeated story must appear once");
+  assert.deepEqual(feed.items.map((item) => item.title), ["Introducing GPT-6.1 Sol", "Another story"]);
+  // The copy kept is the newest one, so the sorting stays meaningful.
+  assert.equal(feed.items[0].date, "2026-09-29T17:00:00.000Z");
+});
+
 // ── Atom ────────────────────────────────────────────────────────────────────
 
 const ATOM = `<?xml version="1.0" encoding="utf-8"?>

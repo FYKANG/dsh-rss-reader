@@ -153,6 +153,82 @@ test("store merges fetched items and preserves read/starred flags", async () => 
   assert.equal(item1.title, "One (edited)", "presentation fields still refresh");
 });
 
+test("store keeps one row when a feed lists the same guid twice", async () => {
+  const store = await makeStore();
+  const { feed } = store.add({ url: "https://s.test/feed" });
+  const STORY = "https://s.test/introducing-gpt-6-1-sol";
+  const story = (date) => ({
+    id: STORY,
+    title: "Introducing GPT-6.1 Sol",
+    link: STORY,
+    summary: "Meet GPT-6.1 Sol",
+    content: "",
+    author: "",
+    date,
+    categories: [],
+    enclosure: ""
+  });
+  const fetched = () => ({
+    feed: { title: "S", link: "", description: "", image: "", format: "rss", items: [story("2026-09-29T17:00:00.000Z"), story("2026-09-29T10:00:00.000Z")] },
+    url: "",
+    etag: "",
+    lastModified: ""
+  });
+
+  const first = store.applyFetch(feed.id, fetched());
+  assert.equal(first.added, 1, "one story, however many times the feed lists it");
+  assert.equal(feed.items.length, 1, "the second copy must not be stored");
+  assert.equal(feed.items[0].date, "2026-09-29T17:00:00.000Z", "the newest copy is the one kept");
+  assert.equal(store.snapshot().totals.unread, 1, "a duplicate must not be counted twice");
+
+  // Reading it clears it for good: the next refresh neither resurrects it as
+  // unread nor reports the twin as a new item.
+  store.setItemFlags(feed.id, STORY, { read: true });
+  assert.equal(store.snapshot().totals.unread, 0);
+  const second = store.applyFetch(feed.id, fetched());
+  assert.equal(second.added, 0, "a repeated guid is never a new item");
+  assert.equal(feed.items.length, 1);
+  assert.equal(feed.items[0].read, true, "the read flag survives the refresh");
+});
+
+test("store repairs a duplicated item it reads off disk", async () => {
+  const dir = await scratch();
+  const file = join(dir, "feeds.json");
+  const stored = (date, read) => ({
+    id: "https://s.test/introducing-gpt-6-1-sol",
+    title: "Introducing GPT-6.1 Sol",
+    link: "https://s.test/introducing-gpt-6-1-sol",
+    summary: "Meet GPT-6.1 Sol",
+    summaryMarkdown: "",
+    content: "",
+    markdown: "",
+    author: "",
+    date,
+    categories: [],
+    enclosure: "",
+    read,
+    starred: false,
+    translation: null
+  });
+  await writeFile(file, JSON.stringify({
+    version: 1,
+    feeds: [{
+      id: "f1",
+      url: "https://s.test/feed",
+      title: "S",
+      items: [stored("2026-09-29T17:00:00.000Z", true), stored("2026-09-29T10:00:00.000Z", false)]
+    }]
+  }), "utf8");
+
+  const store = new FeedStore({ file });
+  await store.load();
+  const items = store.list()[0].items;
+  assert.equal(items.length, 1, "a pair written before the fix is collapsed on load");
+  // The reader did read this story: the copy carrying that flag is what remains.
+  assert.equal(items[0].read, true);
+  assert.equal(store.snapshot().totals.unread, 0);
+});
+
 test("store trims each feed to its retention cap, keeping the newest", async () => {
   const store = await makeStore({ maxItemsPerFeed: 3 });
   const { feed } = store.add({ url: "https://s.test/feed" });
